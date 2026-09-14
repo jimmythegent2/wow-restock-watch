@@ -1,10 +1,8 @@
 name: Restock watch
 
 on:
-  schedule:
-    # Off the :00/:05 marks, where GitHub's scheduler is busiest and drops runs.
-    # Runs can still arrive a few minutes late.
-    - cron: '2-59/5 * * * *'
+  # No schedule: GitHub never fired one for this repo. Checks now run through the
+  # Cloudflare Worker's /check URL; this stays as a manual test button.
   workflow_dispatch:
     inputs:
       test_alert:
