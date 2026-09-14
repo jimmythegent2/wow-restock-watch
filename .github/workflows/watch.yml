@@ -1,0 +1,41 @@
+name: Restock watch
+
+on:
+  schedule:
+    - cron: '*/5 * * * *' # GitHub may run this a few minutes late when busy
+  workflow_dispatch:
+    inputs:
+      test_alert:
+        description: Send a test notification instead of checking stock
+        type: boolean
+        default: false
+
+permissions:
+  actions: write # lets the job switch itself off after alerting
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Check stock
+        id: check
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          TEST_ALERT: ${{ inputs.test_alert }}
+        run: |
+          set +e
+          node check.mjs
+          code=$?
+          if [ "$code" = "10" ]; then echo "in_stock=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          exit $code
+      # One alert, not one every five minutes. Re-enable under Actions to watch again.
+      - name: Stop watching after alerting
+        if: steps.check.outputs.in_stock == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow disable "Restock watch" --repo "$GITHUB_REPOSITORY"
