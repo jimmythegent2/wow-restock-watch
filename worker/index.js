@@ -6,6 +6,7 @@
 const PRODUCT_URL =
   'https://gear.blizzard.com/products/wowccl0012-world-of-warcraft-forever-collectors-edition';
 const QUIET_SECONDS = 6 * 60 * 60;
+const HEARTBEAT_MS = 6 * 60 * 60 * 1000;
 
 async function notify(env, title, message, priority) {
   const res = await fetch(`https://ntfy.sh/${env.NTFY_TOPIC}`, {
@@ -23,8 +24,15 @@ async function check(env) {
   if (!res.ok) throw new Error(`Gear Store responded ${res.status}`);
   const product = await res.json();
   const inStock = product.available || product.variants.some((v) => v.available);
-  const line = `${new Date().toISOString()} ${inStock ? 'IN STOCK' : 'sold out'} ($${product.price / 100})`;
-  await env.STATE.put('last-check', line);
+  const state = inStock ? 'IN STOCK' : 'sold out';
+  const line = `${new Date().toISOString()} ${state} ($${product.price / 100})`;
+
+  // Free KV allows 1,000 writes a day and two pingers check every 5 minutes, so
+  // only record a change of state — or a heartbeat, to show the watcher is alive.
+  const previous = await env.STATE.get('last-check');
+  const changed = !previous || !previous.includes(state);
+  const stale = previous && Date.now() - Date.parse(previous.split(' ')[0]) > HEARTBEAT_MS;
+  if (changed || stale) await env.STATE.put('last-check', line);
 
   if (inStock && !(await env.STATE.get('alerted'))) {
     await notify(
@@ -40,11 +48,15 @@ async function check(env) {
 
 export default {
   async scheduled(_event, env, ctx) {
-    // A failed check must still leave a trace on the status page.
+    // A failed check must still leave a trace on the status page — but a store
+    // outage repeating every 5 minutes must not burn the daily write quota.
     ctx.waitUntil(
-      check(env).catch((err) =>
-        env.STATE.put('last-check', `${new Date().toISOString()} ERROR ${err.message}`),
-      ),
+      check(env).catch(async (err) => {
+        const previous = await env.STATE.get('last-check');
+        if (!previous?.includes('ERROR')) {
+          await env.STATE.put('last-check', `${new Date().toISOString()} ERROR ${err.message}`);
+        }
+      }),
     );
   },
   // /check runs a check on demand (for an outside pinger, or testing); the
